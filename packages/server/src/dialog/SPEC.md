@@ -42,6 +42,12 @@ The host's native directory picker, so the browser "Open project" gets a real OS
   The script is handed over as `-EncodedCommand` (base64/UTF-16LE), not `-Command`: it is multi-line and
   contains the double quotes of P/Invoke signatures, which Windows argv quoting plus PowerShell's own
   re-parse do not preserve.
+  **Its first line pins `[Console]::OutputEncoding` to a BOM-less UTF-8.** PowerShell otherwise writes
+  stdout in the host's ANSI/OEM code page (cp936 on a Chinese Windows) while the host decodes it as
+  UTF-8, so any path containing non-ASCII characters came back as mojibake and the pick read as "This
+  folder no longer exists" — measured, both `powershell.exe` 5.1 and `pwsh.exe` 7, with and without a
+  console attached (`windowsHide`). The host keeps its unconditional UTF-8 decode; forcing the encoding
+  in the child is the fix. `$false` suppresses the preamble.
 - **Public surface (barrel):** `selectDirectory` (+ `pickersFor` / `Picker` and the two message builders
   `pickerFailure` / `noPickerMessage`, exposed for unit tests).
 - **Allowed deps:** Bun (`Bun.spawn`, with `windowsHide`; see `architecture.md` Invariants),

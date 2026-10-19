@@ -31,6 +31,7 @@ const linuxCancellation = ({ code, stderr }: PickerExecution): boolean =>
 const noNonZeroCancellation = (): boolean => false;
 
 const WINDOWS_PICKER = [
+	"[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false",
 	"$ErrorActionPreference = 'Stop'",
 	"Add-Type -AssemblyName System.Windows.Forms",
 	"$owner = New-Object System.Windows.Forms.Form",

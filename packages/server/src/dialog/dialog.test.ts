@@ -4,6 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { noPickerMessage, pickerFailure, pickersFor, selectDirectory } from "./dialog";
 
+const windows = test.skipIf(process.platform !== "win32");
+
+function pickerScript(platform: NodeJS.Platform): string {
+	const picker = pickersFor(platform)[0];
+	if (!picker) throw new Error(`expected a ${platform} picker`);
+	const flag = picker.cmd.indexOf("-EncodedCommand");
+	if (flag === -1) throw new Error("expected an -EncodedCommand picker");
+	return Buffer.from(picker.cmd[flag + 1] ?? "", "base64").toString("utf16le");
+}
+
 test("macOS picker uses osascript 'choose folder'", () => {
 	const pickers = pickersFor("darwin");
 	expect(pickers).toHaveLength(1);
@@ -36,6 +46,43 @@ test("Windows picker: a PowerShell FolderBrowserDialog, -Sta, owned by a top-mos
 		expect(script).toContain("} catch { }");
 	}
 });
+
+test("the Windows picker writes UTF-8 before it writes the selected path", () => {
+	const script = pickerScript("win32");
+	const encoding = script.indexOf("[Console]::OutputEncoding");
+	expect(encoding).toBeGreaterThan(-1);
+	expect(script.slice(encoding)).toContain("UTF8Encoding");
+	expect(encoding).toBeLessThan(script.indexOf("Write-Output $d.SelectedPath"));
+});
+
+windows(
+	"a real Windows shell writes a non-ASCII path the host's UTF-8 decode can read back",
+	async () => {
+		const picker = pickersFor("win32")[0];
+		if (!picker) throw new Error("expected a win32 picker");
+		const flag = picker.cmd.indexOf("-EncodedCommand");
+		const script = pickerScript("win32");
+		const lines = script.split("\n");
+		const gui = lines.findIndex((line) => line.includes("System.Windows.Forms"));
+		expect(gui).toBeGreaterThan(0);
+		const prelude = lines.slice(0, gui).join("\n");
+		const path = "C:\\用户\\项目\\测试";
+		const probe = Buffer.from(`${prelude}\nWrite-Output '${path}'`, "utf16le").toString("base64");
+
+		const shells: string[] = [];
+		for (const candidate of pickersFor("win32")) {
+			const shell = Bun.which(candidate.cmd[0] ?? "");
+			if (!shell) continue;
+			const cmd = candidate.cmd.map((arg, index) => (index === flag + 1 ? probe : arg));
+			const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe", windowsHide: true });
+			const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+			expect(code).toBe(0);
+			expect(picker.parse(stdout)).toBe(path);
+			shells.push(shell);
+		}
+		expect(shells.length).toBeGreaterThan(0);
+	},
+);
 
 test("pickers distinguish cancellation from a failed non-zero exit", () => {
 	const execution = { stdout: "", stderr: "", code: 1 };
